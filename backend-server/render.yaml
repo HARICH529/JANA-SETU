@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: civic-reports-api
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: civic-reports-redis
+          property: connectionString
+
+  - type: redis
+    name: civic-reports-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: civic-ml-service
+    env: python
+    plan: starter
+    buildCommand: pip install -r ml-service/requirements.txt
+    startCommand: cd ml-service && python app.py
+    envVars:
+      - key: PORT
+        value: 8000

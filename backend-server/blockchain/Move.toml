@@ -1,0 +1,12 @@
+[package]
+name = "civic_reporting"
+version = "1.0.0"
+authors = ["Civic Team"]
+
+[addresses]
+civic_reporting = "0xbb18f7b6e2a27904b788ba22985430e83fa3f374183e1c3278dc2d796630b33a"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "testnet"
+subdir = "aptos-move/framework/aptos-framework"

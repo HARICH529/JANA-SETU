@@ -1,0 +1,21 @@
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBq1TNRMnbDS7kgfp-7nGUC5RRkRNHMZDs",
+  authDomain: "civic-reponse.firebaseapp.com",
+  projectId: "civic-reponse",
+  storageBucket: "civic-reponse.firebasestorage.app",
+  messagingSenderId: "597942233336",
+  appId: "1:597942233336:web:9a6b4fb54cd482ccde330d",
+  measurementId: "G-JDVE04G04X"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);

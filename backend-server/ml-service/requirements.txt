@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+torch
+torchvision
+transformers
+pillow
+requests
+pydantic
+pymongo
+librosa
+numpy
+python-multipart

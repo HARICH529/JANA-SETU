@@ -1,0 +1,390 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:provider/provider.dart';
+import 'package:audio_waveforms/audio_waveforms.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../providers/report_provider.dart';
+import '../providers/notification_provider.dart';
+import '../providers/simple_auth_provider.dart';
+
+class CreateReportScreen extends StatefulWidget {
+  const CreateReportScreen({super.key});
+
+  @override
+  State<CreateReportScreen> createState() => _CreateReportScreenState();
+}
+
+class _CreateReportScreenState extends State<CreateReportScreen> {
+  final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _addressController = TextEditingController();
+  
+  File? _selectedImage;
+  File? _recordedAudio;
+  Position? _currentPosition;
+  bool _isLoadingLocation = false;
+  bool _isRecording = false;
+  RecorderController? _recorderController;
+
+  @override
+  void initState() {
+    super.initState();
+    _initRecorder();
+    _getCurrentLocation();
+  }
+
+  Future<void> _initRecorder() async {
+    _recorderController = RecorderController();
+  }
+
+  @override
+  void dispose() {
+    _recorderController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    setState(() => _isLoadingLocation = true);
+    
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.whileInUse || 
+          permission == LocationPermission.always) {
+        _currentPosition = await Geolocator.getCurrentPosition();
+        
+        // Get address from coordinates (simplified)
+        _addressController.text = 'Lat: ${_currentPosition!.latitude.toStringAsFixed(4)}, '
+                                 'Lng: ${_currentPosition!.longitude.toStringAsFixed(4)}';
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error getting location: $e')),
+      );
+    } finally {
+      setState(() => _isLoadingLocation = false);
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.camera);
+    
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImage = File(pickedFile.path);
+      });
+    }
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_recorderController == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Recorder not initialized')),
+      );
+      return;
+    }
+
+    try {
+      if (_isRecording) {
+        // Stop recording
+        final path = await _recorderController!.stop();
+        if (path != null) {
+          setState(() {
+            _recordedAudio = File(path);
+            _isRecording = false;
+          });
+        }
+      } else {
+        // Check microphone permission
+        final permission = await Permission.microphone.request();
+        if (!permission.isGranted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission is required for voice recording')),
+          );
+          return;
+        }
+
+        // Start recording
+        final directory = await getTemporaryDirectory();
+        final path = '${directory.path}/voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        
+        await _recorderController!.record(path: path);
+        
+        setState(() {
+          _isRecording = true;
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Recording error: $e')),
+      );
+      setState(() {
+        _isRecording = false;
+      });
+    }
+  }
+
+  void _deleteAudio() {
+    setState(() {
+      _recordedAudio = null;
+    });
+  }
+
+  Future<void> _submitReport() async {
+    // Check if at least one content type is provided
+    final hasDescription = _descriptionController.text.trim().isNotEmpty;
+    final hasImage = _selectedImage != null;
+    final hasAudio = _recordedAudio != null;
+    
+    if (!hasDescription && !hasImage && !hasAudio) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please provide at least description, image, or audio')),
+      );
+      return;
+    }
+    
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Location is required')),
+      );
+      return;
+    }
+
+    final reportProvider = Provider.of<ReportProvider>(context, listen: false);
+    
+    final success = await reportProvider.createReport(
+      title: '', // Title will be generated by ML
+      description: _descriptionController.text.trim(),
+      category: 'General',
+      latitude: _currentPosition!.latitude,
+      longitude: _currentPosition!.longitude,
+      address: _addressController.text.trim().isNotEmpty 
+          ? _addressController.text.trim() 
+          : 'Lat: ${_currentPosition!.latitude.toStringAsFixed(4)}, Lng: ${_currentPosition!.longitude.toStringAsFixed(4)}',
+      image: _selectedImage,
+      voice: _recordedAudio,
+    );
+
+    if (success) {
+      // Refresh notifications after successful report creation
+      final authProvider = Provider.of<SimpleAuthProvider>(context, listen: false);
+      final notificationProvider = Provider.of<NotificationProvider>(context, listen: false);
+      notificationProvider.refreshNotifications(authProvider);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report created successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create report: ${reportProvider.error ?? 'Unknown error'}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Create Report'),
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+      ),
+      body: Consumer<ReportProvider>(
+        builder: (context, reportProvider, child) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Description Field
+                const Text('Description', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _descriptionController,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    hintText: 'Describe the issue (optional if you provide image/audio)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Info text
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Provide at least one: description, photo, or voice note. Title and category will be auto-generated.',
+                          style: TextStyle(color: Colors.blue, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Location Field
+                const Text('Location *', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _addressController,
+                        decoration: const InputDecoration(
+                          hintText: 'Address or location',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _isLoadingLocation ? null : _getCurrentLocation,
+                      child: _isLoadingLocation 
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.my_location),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Image Picker
+                const Text('Photo', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: _pickImage,
+                  child: Container(
+                    width: double.infinity,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: _selectedImage != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            _selectedImage!,
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      : const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.camera_alt, size: 48, color: Colors.grey),
+                            SizedBox(height: 8),
+                            Text('Tap to take photo', style: TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Voice Recording
+                const Text('Voice Note (Optional)', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _recordedAudio != null
+                    ? Row(
+                        children: [
+                          const Icon(Icons.audiotrack, color: Colors.green),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text('Voice note recorded', style: TextStyle(color: Colors.green)),
+                          ),
+                          IconButton(
+                            onPressed: _deleteAudio,
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          Icon(
+                            _isRecording ? Icons.stop : Icons.mic,
+                            size: 48,
+                            color: _isRecording ? Colors.red : Colors.grey,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _isRecording ? 'Recording... Tap to stop' : 'Tap to record voice note',
+                            style: TextStyle(
+                              color: _isRecording ? Colors.red : Colors.grey,
+                              fontWeight: _isRecording ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ElevatedButton(
+                            onPressed: _toggleRecording,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _isRecording ? Colors.red : Colors.blue,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(_isRecording ? 'Stop Recording' : 'Start Recording'),
+                          ),
+                        ],
+                      ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Submit Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: reportProvider.isLoading ? null : _submitReport,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: reportProvider.isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text('Submit Report', style: TextStyle(fontSize: 16)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
